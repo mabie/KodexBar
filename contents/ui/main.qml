@@ -176,6 +176,31 @@ PlasmoidItem {
         return i18n("Resets in %1m", minutes)
     }
 
+    function formatExpiryTime(value) {
+        if (!value) {
+            return ""
+        }
+        var expiry = new Date(value)
+        var timestamp = expiry.getTime()
+        if (isNaN(timestamp)) {
+            return ""
+        }
+        var diff = Math.max(0, timestamp - Date.now())
+        var minutes = Math.round(diff / 60000)
+        if (minutes < 1) {
+            return i18n("Expires now")
+        }
+        var hours = Math.floor(minutes / 60)
+        var days = Math.floor(hours / 24)
+        if (days > 0) {
+            return i18n("Expires in %1d %2h", days, hours % 24)
+        }
+        if (hours > 0) {
+            return i18n("Expires in %1h %2m", hours, minutes % 60)
+        }
+        return i18n("Expires in %1m", minutes)
+    }
+
     function resetTimeFromDescription(value) {
         if (!value) {
             return null
@@ -281,9 +306,15 @@ PlasmoidItem {
         var provider = selectedProvider || "detect"
         var source = selectedSource || "detect"
         var sources = source === "detect" || source === "auto" ? ["cli", "oauth", "api", "auto"] : [source]
+        if (String(provider).toLowerCase() === "codex" && (source === "detect" || source === "auto")) {
+            sources = ["oauth", "cli", "api", "auto"]
+        }
         var result = []
 
         if (provider === "detect" && source === "detect") {
+            // OAuth includes Codex reset credits; try it before the CLI's
+            // default source when the widget is using automatic detection.
+            result.push({ provider: "codex", source: "oauth" })
             result.push({ provider: "", source: "" })
         }
 
@@ -299,8 +330,8 @@ PlasmoidItem {
         }
 
         return [
-            { provider: "codex", source: "cli" },
             { provider: "codex", source: "oauth" },
+            { provider: "codex", source: "cli" },
             { provider: "codex", source: "api" },
             { provider: "claude", source: "cli" },
             { provider: "claude", source: "oauth" },
@@ -719,6 +750,49 @@ PlasmoidItem {
         return resetTimeFromDescription(window.resetDescription || window.resetsIn || "")
     }
 
+    function normalizeCodexResetCredits(raw) {
+        if (!raw || typeof raw !== "object") {
+            return null
+        }
+
+        var credits = raw.credits instanceof Array ? raw.credits : []
+        var availableCredits = []
+        var nextExpiresAt = null
+        var now = Date.now()
+        for (var i = 0; i < credits.length; i++) {
+            var credit = credits[i]
+            if (!credit || typeof credit !== "object"
+                    || (credit.status && String(credit.status).toLowerCase() !== "available")) {
+                continue
+            }
+
+            var expiresAt = credit.expires_at || credit.expiresAt || ""
+            var expiry = expiresAt ? new Date(expiresAt) : null
+            if (expiry && !isNaN(expiry.getTime()) && expiry.getTime() <= now) {
+                continue
+            }
+
+            availableCredits.push(credit)
+            if (expiry && !isNaN(expiry.getTime())
+                    && (nextExpiresAt === null || expiry.getTime() < new Date(nextExpiresAt).getTime())) {
+                nextExpiresAt = expiry.toISOString()
+            }
+        }
+
+        var availableCount = typeof raw.availableCount === "number"
+            ? Math.max(0, Math.round(raw.availableCount))
+            : availableCredits.length
+        if (typeof raw.availableCount !== "number" && credits.length === 0) {
+            return null
+        }
+
+        return {
+            availableCount: availableCount,
+            nextExpiresAt: nextExpiresAt,
+            updatedAt: raw.updatedAt || ""
+        }
+    }
+
     function windowDetail(window, usageKnown) {
         if (!window || typeof window !== "object") {
             return ""
@@ -788,6 +862,9 @@ PlasmoidItem {
         var tertiary = usage.tertiary
         var providerCost = usage.providerCost && typeof usage.providerCost === "object" ? usage.providerCost : null
         var status = entry.status && typeof entry.status === "object" ? entry.status : null
+        var codexResetCredits = String(entry.provider || "").toLowerCase() === "codex"
+            ? normalizeCodexResetCredits(usage.codexResetCredits || entry.codexResetCredits)
+            : null
         var rows = []
         var windows = [
             { title: i18n("Session"), data: primary },
@@ -838,6 +915,7 @@ PlasmoidItem {
             primaryResetsAt: resetAt(primary),
             secondaryPercentLeft: percentLeft(secondary),
             secondaryResetsAt: resetAt(secondary),
+            codexResetCredits: codexResetCredits,
             creditsRemaining: credits ? credits.remaining : (typeof dashboard.creditsRemaining === "number" ? dashboard.creditsRemaining : null),
             codeReviewRemainingPercent: typeof dashboard.codeReviewRemainingPercent === "number" ? dashboard.codeReviewRemainingPercent : null,
             dashboardSummary: dashboardSummary(dashboard),
@@ -1163,6 +1241,55 @@ PlasmoidItem {
                                         color: Kirigami.Theme.disabledTextColor
                                         wrapMode: Text.WordWrap
                                         Layout.fillWidth: true
+                                    }
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                visible: modelData.codexResetCredits !== null
+                                spacing: Kirigami.Units.smallSpacing
+
+                                Kirigami.Heading {
+                                    text: i18n("Rate-limit resets")
+                                    level: 4
+                                    Layout.fillWidth: true
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Kirigami.Units.smallSpacing
+
+                                    PlasmaComponents.Label {
+                                        text: i18n("Available")
+                                        Layout.fillWidth: true
+                                    }
+
+                                    PlasmaComponents.Label {
+                                        text: i18np("%1 reset", "%1 resets", modelData.codexResetCredits
+                                            ? modelData.codexResetCredits.availableCount : 0)
+                                        color: Kirigami.Theme.disabledTextColor
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Kirigami.Units.smallSpacing
+                                    visible: modelData.codexResetCredits
+                                        && modelData.codexResetCredits.nextExpiresAt
+                                        && modelData.codexResetCredits.nextExpiresAt.length > 0
+
+                                    PlasmaComponents.Label {
+                                        text: i18n("Next expiry")
+                                        Layout.fillWidth: true
+                                    }
+
+                                    PlasmaComponents.Label {
+                                        text: root.formatExpiryTime(modelData.codexResetCredits
+                                            ? modelData.codexResetCredits.nextExpiresAt : "")
+                                        color: Kirigami.Theme.disabledTextColor
+                                        horizontalAlignment: Text.AlignRight
                                     }
                                 }
                             }

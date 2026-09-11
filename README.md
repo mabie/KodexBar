@@ -69,6 +69,7 @@ The popup renders common CodexBar CLI fields:
 
 - session, weekly, tertiary, and extra rate-limit windows
 - reset countdowns and usage bars
+- Codex rate-limit reset credits, including available count and earliest expiry
 - provider spend/budget rows
 - credit balances
 - OpenAI dashboard summaries where present
