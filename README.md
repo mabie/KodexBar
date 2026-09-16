@@ -43,12 +43,21 @@ Make sure the provider CLIs or credentials you rely on are already configured. F
 Clone this repository and install the applet:
 
 ```sh
-git clone https://github.com/tylxr59/KodexBar.git
+git clone https://github.com/mabie/KodexBar.git
 cd KodexBar
 kpackagetool6 -t Plasma/Applet -i .
 ```
 
 Then add **KodexBar** to a Plasma panel.
+
+To update an existing install:
+
+```sh
+kpackagetool6 -t Plasma/Applet -u .
+plasmashell --replace &
+```
+
+Restarting plasmashell matters after an update. New widget settings only show up once it reloads the package. If a new option is still missing, remove the widget from the panel and add it again.
 
 For development reloads:
 
