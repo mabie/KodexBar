@@ -662,13 +662,13 @@ PlasmoidItem {
             var date = new Date(today.getTime() - d * 86400000)
             var key = localDayKey(date)
             var found = byDate[key]
+            var dayCost = found && typeof found.totalCost === "number" ? found.totalCost : 0
+            var dayTokens = found && typeof found.totalTokens === "number" ? found.totalTokens : 0
             series.push({
                 date: key,
-                value: found
-                    ? (metric === "tokens"
-                        ? (typeof found.totalTokens === "number" ? found.totalTokens : 0)
-                        : (typeof found.totalCost === "number" ? found.totalCost : 0))
-                    : 0
+                value: metric === "tokens" ? dayTokens : dayCost,
+                totalCost: dayCost,
+                totalTokens: dayTokens
             })
         }
         return series
@@ -689,6 +689,30 @@ PlasmoidItem {
             return ""
         }
         return dateStr.slice(5).replace("-", "/")
+    }
+
+    function formatTooltipDate(dateStr) {
+        if (!dateStr || dateStr.length < 10) {
+            return ""
+        }
+        var parts = dateStr.split("-")
+        var date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+        var sameYear = date.getFullYear() === new Date().getFullYear()
+        return Qt.locale().toString(date, sameYear ? "ddd, MMM d" : "ddd, MMM d yyyy")
+    }
+
+    function historyTooltipValues(item, metric, currencyCode) {
+        if (!item) {
+            return ""
+        }
+        var cost = typeof item.totalCost === "number" ? item.totalCost : 0
+        var tokens = typeof item.totalTokens === "number" ? item.totalTokens : 0
+        if (cost === 0 && tokens === 0) {
+            return i18n("No usage")
+        }
+        var costText = formatCurrency(cost, currencyCode || "USD")
+        var tokensText = i18n("%1 tokens", formatTokenCount(tokens))
+        return metric === "tokens" ? tokensText + " - " + costText : costText + " - " + tokensText
     }
 
     function costSummaryRows(summary) {
@@ -1606,51 +1630,164 @@ PlasmoidItem {
                                     }
                                 }
 
-                                Canvas {
-                                    id: historyCanvas
+                                Item {
+                                    id: historyChart
                                     visible: modelData.costSummary
                                         && modelData.costSummary.daily
                                         && modelData.costSummary.daily.length > 0
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: 72
-                                    renderTarget: Canvas.FramebufferObject
-                                    property var series: root.historySeries(
-                                        modelData.costSummary,
-                                        root.costHistoryMetric,
-                                        modelData.costSummary ? modelData.costSummary.historyDays : 30)
-                                    property real peak: root.historyPeak(series)
-                                    onSeriesChanged: requestPaint()
-                                    onPeakChanged: requestPaint()
-                                    Component.onCompleted: requestPaint()
-                                    onPaint: {
-                                        var ctx = getContext("2d")
-                                        ctx.clearRect(0, 0, width, height)
-                                        if (!series || series.length === 0) {
-                                            return
-                                        }
-                                        var track = Qt.rgba(Kirigami.Theme.disabledTextColor.r,
-                                                            Kirigami.Theme.disabledTextColor.g,
-                                                            Kirigami.Theme.disabledTextColor.b, 0.22)
-                                        var fill = Kirigami.Theme.highlightColor
-                                        var n = series.length
-                                        var slot = width / n
-                                        var barW = Math.max(2, Math.min(10, slot * 0.62))
-                                        var base = height - 2
-                                        var maxH = height - 10
-                                        ctx.fillStyle = track
-                                        ctx.fillRect(0, base - 1, width, 1)
-                                        for (var i = 0; i < n; i++) {
-                                            var h = peak > 0 ? series[i].value / peak * maxH : 0
-                                            var x = i * slot + (slot - barW) / 2
-                                            if (h < 1 && series[i].value > 0) {
-                                                h = 1
+
+                                    Canvas {
+                                        id: historyCanvas
+                                        anchors.fill: parent
+                                        renderTarget: Canvas.FramebufferObject
+                                        property var series: root.historySeries(
+                                            modelData.costSummary,
+                                            root.costHistoryMetric,
+                                            modelData.costSummary ? modelData.costSummary.historyDays : 30)
+                                        property real peak: root.historyPeak(series)
+                                        property int hoveredIndex: -1
+                                        onSeriesChanged: requestPaint()
+                                        onPeakChanged: requestPaint()
+                                        onHoveredIndexChanged: requestPaint()
+                                        Component.onCompleted: requestPaint()
+                                        onPaint: {
+                                            var ctx = getContext("2d")
+                                            ctx.clearRect(0, 0, width, height)
+                                            if (!series || series.length === 0) {
+                                                return
                                             }
-                                            if (h > 0) {
-                                                ctx.fillStyle = fill
-                                                ctx.fillRect(x, base - h, barW, h)
-                                            } else {
-                                                ctx.fillStyle = track
-                                                ctx.fillRect(x, base - 2, barW, 2)
+                                            var track = Qt.rgba(Kirigami.Theme.disabledTextColor.r,
+                                                                Kirigami.Theme.disabledTextColor.g,
+                                                                Kirigami.Theme.disabledTextColor.b, 0.22)
+                                            var fill = Kirigami.Theme.highlightColor
+                                            var hoverFill = Qt.lighter(fill, 1.35)
+                                            var n = series.length
+                                            var slot = width / n
+                                            var barW = Math.max(2, Math.min(10, slot * 0.62))
+                                            var base = height - 2
+                                            var maxH = height - 10
+                                            ctx.fillStyle = track
+                                            ctx.fillRect(0, base - 1, width, 1)
+                                            for (var i = 0; i < n; i++) {
+                                                var h = peak > 0 ? series[i].value / peak * maxH : 0
+                                                var x = i * slot + (slot - barW) / 2
+                                                if (h < 1 && series[i].value > 0) {
+                                                    h = 1
+                                                }
+                                                if (h > 0) {
+                                                    ctx.fillStyle = i === hoveredIndex ? hoverFill : fill
+                                                    ctx.fillRect(x, base - h, barW, h)
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        hoverEnabled: true
+                                        acceptedButtons: Qt.NoButton
+
+                                        function updateHover(px) {
+                                            var s = historyCanvas.series
+                                            if (!s || s.length === 0 || historyCanvas.width <= 0) {
+                                                historyCanvas.hoveredIndex = -1
+                                                return
+                                            }
+                                            var slot = historyCanvas.width / s.length
+                                            historyCanvas.hoveredIndex =
+                                                Math.max(0, Math.min(s.length - 1, Math.floor(px / slot)))
+                                        }
+
+                                        onEntered: updateHover(mouseX)
+                                        onPositionChanged: updateHover(mouseX)
+                                        onExited: historyCanvas.hoveredIndex = -1
+                                    }
+
+                                    Rectangle {
+                                        id: hoverLine
+                                        visible: historyCanvas.hoveredIndex >= 0
+                                        width: 1
+                                        height: parent.height
+                                        color: Kirigami.Theme.highlightColor
+                                        opacity: 0.6
+                                        x: {
+                                            var s = historyCanvas.series
+                                            var idx = historyCanvas.hoveredIndex
+                                            if (!s || s.length === 0 || idx < 0 || idx >= s.length) {
+                                                return 0
+                                            }
+                                            var slot = historyCanvas.width / s.length
+                                            return Math.round(idx * slot + slot / 2)
+                                        }
+                                    }
+
+                                    Rectangle {
+                                        id: hoverTooltip
+                                        visible: historyCanvas.hoveredIndex >= 0
+                                        width: hoverTooltipColumn.width + Kirigami.Units.largeSpacing
+                                        height: hoverTooltipColumn.height + Kirigami.Units.smallSpacing * 2
+                                        y: 0
+                                        x: {
+                                            var s = historyCanvas.series
+                                            var idx = historyCanvas.hoveredIndex
+                                            if (!s || s.length === 0 || idx < 0 || idx >= s.length) {
+                                                return 0
+                                            }
+                                            var slot = historyCanvas.width / s.length
+                                            var center = idx * slot + slot / 2
+                                            return Math.max(0, Math.min(historyCanvas.width - width,
+                                                                        Math.round(center - width / 2)))
+                                        }
+                                        color: Kirigami.Theme.backgroundColor
+                                        radius: Kirigami.Units.cornerRadius
+                                        border.width: 1
+                                        border.color: Qt.rgba(Kirigami.Theme.disabledTextColor.r,
+                                                              Kirigami.Theme.disabledTextColor.g,
+                                                              Kirigami.Theme.disabledTextColor.b, 0.35)
+
+                                        Column {
+                                            id: hoverTooltipColumn
+                                            anchors.centerIn: parent
+                                            width: childrenRect.width
+                                            height: childrenRect.height
+                                            spacing: 0
+
+                                            PlasmaComponents.Label {
+                                                width: Math.max(0, Math.min(implicitWidth,
+                                                                            historyChart.width - Kirigami.Units.largeSpacing))
+                                                elide: Text.ElideRight
+                                                text: {
+                                                    var s = historyCanvas.series
+                                                    var idx = historyCanvas.hoveredIndex
+                                                    return s && idx >= 0 && idx < s.length
+                                                        ? root.formatTooltipDate(s[idx].date)
+                                                        : ""
+                                                }
+                                                color: Kirigami.Theme.disabledTextColor
+                                                font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                            }
+
+                                            PlasmaComponents.Label {
+                                                width: Math.max(0, Math.min(implicitWidth,
+                                                                            historyChart.width - Kirigami.Units.largeSpacing))
+                                                elide: Text.ElideRight
+                                                text: {
+                                                    var s = historyCanvas.series
+                                                    var idx = historyCanvas.hoveredIndex
+                                                    if (!s || idx < 0 || idx >= s.length) {
+                                                        return ""
+                                                    }
+                                                    var code = modelData.costSummary
+                                                        ? modelData.costSummary.currencyCode
+                                                        : "USD"
+                                                    return root.historyTooltipValues(s[idx],
+                                                                                     root.costHistoryMetric,
+                                                                                     code)
+                                                }
+                                                color: Kirigami.Theme.textColor
+                                                font.pointSize: Kirigami.Theme.smallFont.pointSize
                                             }
                                         }
                                     }
