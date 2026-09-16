@@ -24,12 +24,14 @@ PlasmoidItem {
     property string activeSource: selectedSource
     property var pendingCandidates: []
     property var failedCandidates: []
+    property int selectedEntryIndex: 0
     property bool showCreditsInPanel: Plasmoid.configuration.showCreditsInPanel === undefined ? true : Plasmoid.configuration.showCreditsInPanel
     property bool showUsedPercentInPanel: Plasmoid.configuration.showUsedPercentInPanel === undefined ? true : Plasmoid.configuration.showUsedPercentInPanel
     property bool showProviderInPanel: Plasmoid.configuration.showProviderInPanel === undefined ? true : Plasmoid.configuration.showProviderInPanel
     property bool showEmailInWidget: Plasmoid.configuration.showEmailInWidget === undefined ? false : Plasmoid.configuration.showEmailInWidget
     property bool includeStatus: Plasmoid.configuration.includeStatus === undefined ? false : Plasmoid.configuration.includeStatus
     property bool showCostSummary: Plasmoid.configuration.showCostSummary === undefined ? true : Plasmoid.configuration.showCostSummary
+    property bool hideUnavailableProviders: Plasmoid.configuration.hideUnavailableProviders === undefined ? true : Plasmoid.configuration.hideUnavailableProviders
     property int refreshSeconds: Math.max(10, Plasmoid.configuration.refreshInterval || 60)
 
     preferredRepresentation: compactRepresentation
@@ -176,6 +178,31 @@ PlasmoidItem {
         return i18n("Resets in %1m", minutes)
     }
 
+    function formatExpiryTime(value) {
+        if (!value) {
+            return ""
+        }
+        var expiry = new Date(value)
+        var timestamp = expiry.getTime()
+        if (isNaN(timestamp)) {
+            return ""
+        }
+        var diff = Math.max(0, timestamp - Date.now())
+        var minutes = Math.round(diff / 60000)
+        if (minutes < 1) {
+            return i18n("Expires now")
+        }
+        var hours = Math.floor(minutes / 60)
+        var days = Math.floor(hours / 24)
+        if (days > 0) {
+            return i18n("Expires in %1d %2h", days, hours % 24)
+        }
+        if (hours > 0) {
+            return i18n("Expires in %1h %2m", hours, minutes % 60)
+        }
+        return i18n("Expires in %1m", minutes)
+    }
+
     function resetTimeFromDescription(value) {
         if (!value) {
             return null
@@ -281,9 +308,15 @@ PlasmoidItem {
         var provider = selectedProvider || "detect"
         var source = selectedSource || "detect"
         var sources = source === "detect" || source === "auto" ? ["cli", "oauth", "api", "auto"] : [source]
+        if (String(provider).toLowerCase() === "codex" && (source === "detect" || source === "auto")) {
+            sources = ["oauth", "cli", "api", "auto"]
+        }
         var result = []
 
         if (provider === "detect" && source === "detect") {
+            // OAuth includes Codex reset credits; try it before the CLI's
+            // default source when the widget is using automatic detection.
+            result.push({ provider: "codex", source: "oauth" })
             result.push({ provider: "", source: "" })
         }
 
@@ -299,8 +332,8 @@ PlasmoidItem {
         }
 
         return [
-            { provider: "codex", source: "cli" },
             { provider: "codex", source: "oauth" },
+            { provider: "codex", source: "cli" },
             { provider: "codex", source: "api" },
             { provider: "claude", source: "cli" },
             { provider: "claude", source: "oauth" },
@@ -362,6 +395,59 @@ PlasmoidItem {
             }
         }
         return false
+    }
+
+    function isUsableEntry(entry) {
+        return entry && !entry.errorMessage
+            && ((entry.rows && entry.rows.length > 0)
+                || entry.creditsRemaining !== null && entry.creditsRemaining !== undefined
+                || entry.codeReviewRemainingPercent !== null && entry.codeReviewRemainingPercent !== undefined)
+    }
+
+    function filterUnavailableEntries(normalized) {
+        if (!hideUnavailableProviders) {
+            return normalized
+        }
+        // Only filter the multi-provider view. Single-provider selection
+        // must keep its error so the user sees why it failed.
+        if (selectedProvider !== "all") {
+            return normalized
+        }
+        if (!hasUsableEntries(normalized)) {
+            return normalized
+        }
+        var kept = []
+        for (var i = 0; i < normalized.length; i++) {
+            if (isUsableEntry(normalized[i])) {
+                kept.push(normalized[i])
+            }
+        }
+        return kept.length > 0 ? kept : normalized
+    }
+
+    function selectedEntry() {
+        if (!entries || entries.length === 0) {
+            return null
+        }
+        var idx = Math.max(0, Math.min(selectedEntryIndex, entries.length - 1))
+        return entries[idx]
+    }
+
+    function selectedEntries() {
+        var entry = selectedEntry()
+        return entry ? [entry] : []
+    }
+
+    function scrollToTop() {
+        // QQC2 ScrollView wraps content in a flickable; guard everything
+        // so a missing internal API can never break tab switching.
+        try {
+            var flick = scrollView.contentItem
+            if (flick && flick.contentY !== undefined) {
+                flick.contentY = 0
+            }
+        } catch (e) {
+        }
     }
 
     function appendFailedEntries(normalized) {
@@ -719,6 +805,49 @@ PlasmoidItem {
         return resetTimeFromDescription(window.resetDescription || window.resetsIn || "")
     }
 
+    function normalizeCodexResetCredits(raw) {
+        if (!raw || typeof raw !== "object") {
+            return null
+        }
+
+        var credits = raw.credits instanceof Array ? raw.credits : []
+        var availableCredits = []
+        var nextExpiresAt = null
+        var now = Date.now()
+        for (var i = 0; i < credits.length; i++) {
+            var credit = credits[i]
+            if (!credit || typeof credit !== "object"
+                    || (credit.status && String(credit.status).toLowerCase() !== "available")) {
+                continue
+            }
+
+            var expiresAt = credit.expires_at || credit.expiresAt || ""
+            var expiry = expiresAt ? new Date(expiresAt) : null
+            if (expiry && !isNaN(expiry.getTime()) && expiry.getTime() <= now) {
+                continue
+            }
+
+            availableCredits.push(credit)
+            if (expiry && !isNaN(expiry.getTime())
+                    && (nextExpiresAt === null || expiry.getTime() < new Date(nextExpiresAt).getTime())) {
+                nextExpiresAt = expiry.toISOString()
+            }
+        }
+
+        var availableCount = typeof raw.availableCount === "number"
+            ? Math.max(0, Math.round(raw.availableCount))
+            : availableCredits.length
+        if (typeof raw.availableCount !== "number" && credits.length === 0) {
+            return null
+        }
+
+        return {
+            availableCount: availableCount,
+            nextExpiresAt: nextExpiresAt,
+            updatedAt: raw.updatedAt || ""
+        }
+    }
+
     function windowDetail(window, usageKnown) {
         if (!window || typeof window !== "object") {
             return ""
@@ -788,6 +917,9 @@ PlasmoidItem {
         var tertiary = usage.tertiary
         var providerCost = usage.providerCost && typeof usage.providerCost === "object" ? usage.providerCost : null
         var status = entry.status && typeof entry.status === "object" ? entry.status : null
+        var codexResetCredits = String(entry.provider || "").toLowerCase() === "codex"
+            ? normalizeCodexResetCredits(usage.codexResetCredits || entry.codexResetCredits)
+            : null
         var rows = []
         var windows = [
             { title: i18n("Session"), data: primary },
@@ -838,6 +970,7 @@ PlasmoidItem {
             primaryResetsAt: resetAt(primary),
             secondaryPercentLeft: percentLeft(secondary),
             secondaryResetsAt: resetAt(secondary),
+            codexResetCredits: codexResetCredits,
             creditsRemaining: credits ? credits.remaining : (typeof dashboard.creditsRemaining === "number" ? dashboard.creditsRemaining : null),
             codeReviewRemainingPercent: typeof dashboard.codeReviewRemainingPercent === "number" ? dashboard.codeReviewRemainingPercent : null,
             dashboardSummary: dashboardSummary(dashboard),
@@ -877,6 +1010,40 @@ PlasmoidItem {
             return Kirigami.Theme.neutralTextColor
         }
         return Kirigami.Theme.highlightColor
+    }
+
+    function usedValue(percentLeft) {
+        var u = usedPercent(percentLeft)
+        if (u === null || u === undefined || isNaN(u)) {
+            return null
+        }
+        return u
+    }
+
+    function blendColors(c1, c2, t) {
+        t = Math.max(0, Math.min(1, t))
+        return Qt.rgba(c1.r * (1 - t) + c2.r * t,
+                       c1.g * (1 - t) + c2.g * t,
+                       c1.b * (1 - t) + c2.b * t, 1)
+    }
+
+    function usageSeverityColor(used) {
+        if (used === null || used === undefined || isNaN(used)) {
+            return Kirigami.Theme.disabledTextColor
+        }
+        if (used < 50) {
+            return Kirigami.Theme.positiveTextColor
+        }
+        if (used < 75) {
+            return Kirigami.Theme.neutralTextColor
+        }
+        if (used < 90) {
+            return blendColors(Kirigami.Theme.neutralTextColor, Kirigami.Theme.negativeTextColor, 0.55)
+        }
+        if (used < 97) {
+            return Kirigami.Theme.negativeTextColor
+        }
+        return Qt.darker(Kirigami.Theme.negativeTextColor, 1.3)
     }
 
     function statusText(indicator, description) {
@@ -955,35 +1122,99 @@ PlasmoidItem {
 
             RowLayout {
                 Layout.fillWidth: true
+                Layout.alignment: Qt.AlignTop
                 spacing: Kirigami.Units.smallSpacing
 
                 RowLayout {
                     spacing: Kirigami.Units.smallSpacing
                     Layout.fillWidth: true
+                    Layout.alignment: Qt.AlignTop
 
                     Repeater {
                         model: root.entries.length > 0 ? root.entries : [{ name: "KodexBar", provider: "kodexbar", primaryPercentLeft: null }]
 
                         delegate: Rectangle {
-                            readonly property real used: root.usedPercent(modelData.primaryPercentLeft) || 0
+                            readonly property bool isSelected: index === root.selectedEntryIndex
+                            readonly property color severity5: root.usageSeverityColor(root.usedValue(modelData.primaryPercentLeft))
+                            readonly property color severityWeekly: root.usageSeverityColor(root.usedValue(modelData.secondaryPercentLeft))
                             Layout.preferredWidth: Math.max(Kirigami.Units.gridUnit * 4.25, chipLabel.implicitWidth + Kirigami.Units.largeSpacing * 2)
-                            Layout.preferredHeight: Kirigami.Units.gridUnit * 3.55
+                            Layout.preferredHeight: chipContent.implicitHeight + Kirigami.Units.smallSpacing * 2
                             radius: Kirigami.Units.cornerRadius
-                            color: index === 0 ? Kirigami.Theme.highlightColor : "transparent"
+                            color: "transparent"
+                            border.width: 1
+                            border.color: isSelected ? Kirigami.Theme.highlightColor : "transparent"
                             opacity: modelData.errorMessage ? 0.62 : 1
+                            onSeverity5Changed: ringCanvas.requestPaint()
+                            onSeverityWeeklyChanged: ringCanvas.requestPaint()
 
                             ColumnLayout {
+                                id: chipContent
                                 anchors.fill: parent
-                                anchors.margins: Kirigami.Units.smallSpacing / 1.5
+                                anchors.margins: Kirigami.Units.smallSpacing
                                 spacing: Kirigami.Units.smallSpacing / 2
 
-                                Kirigami.Icon {
-                                    source: root.providerIconSource(modelData.provider)
-                                    isMask: true
-                                    color: index === 0 ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
-                                    implicitWidth: Kirigami.Units.iconSizes.small
-                                    implicitHeight: Kirigami.Units.iconSizes.small
+                                Item {
+                                    readonly property int ringStroke: 4
+                                    readonly property real ringGapAngle: 0.26
+                                    readonly property int ringPad: 3
+                                    readonly property int iconPx: Kirigami.Units.iconSizes.medium
+                                    // One shared radius for both semicircles. They stay
+                                    // separated through the angular gap at 3 and 9 o'clock.
+                                    readonly property real rRing: iconPx / 2 + 8 + ringStroke / 2
+                                    implicitWidth: (rRing + ringStroke / 2 + ringPad) * 2
+                                    implicitHeight: (rRing + ringStroke / 2 + ringPad) * 2
                                     Layout.alignment: Qt.AlignHCenter
+                                    Layout.preferredWidth: implicitWidth
+                                    Layout.preferredHeight: implicitHeight
+
+                                    Canvas {
+                                        id: ringCanvas
+                                        anchors.fill: parent
+                                        renderTarget: Canvas.FramebufferObject
+                                        onPaint: {
+                                            var ctx = getContext("2d")
+                                            ctx.clearRect(0, 0, width, height)
+                                            var cx = width / 2
+                                            var cy = height / 2
+                                            var gap = parent.ringGapAngle
+                                            var span = Math.PI - 2 * gap
+                                            var track = Qt.rgba(Kirigami.Theme.disabledTextColor.r,
+                                                                Kirigami.Theme.disabledTextColor.g,
+                                                                Kirigami.Theme.disabledTextColor.b, 0.3)
+                                            function strokeArc(from, to, color, ccw) {
+                                                ctx.beginPath()
+                                                ctx.arc(cx, cy, parent.rRing, from, to, !!ccw)
+                                                ctx.lineWidth = parent.ringStroke
+                                                ctx.strokeStyle = color
+                                                ctx.lineCap = "round"
+                                                ctx.stroke()
+                                            }
+                                            // Upper semicircle: 5-hour limit, lower: weekly limit.
+                                            // Canvas angles run clockwise from 3 o'clock.
+                                            // Both fills run left to right: upper starts at
+                                            // 9 o'clock going over the top, lower starts at
+                                            // 9 o'clock going counterclockwise along the bottom.
+                                            strokeArc(Math.PI + gap, 2 * Math.PI - gap, track)
+                                            var u5 = root.usedValue(modelData.primaryPercentLeft)
+                                            if (u5 !== null && u5 > 0) {
+                                                strokeArc(Math.PI + gap, Math.PI + gap + Math.min(100, u5) / 100 * span, severity5)
+                                            }
+                                            strokeArc(gap, Math.PI - gap, track)
+                                            var uw = root.usedValue(modelData.secondaryPercentLeft)
+                                            if (uw !== null && uw > 0) {
+                                                strokeArc(Math.PI - gap, Math.PI - gap - Math.min(100, uw) / 100 * span, severityWeekly, true)
+                                            }
+                                        }
+                                    }
+
+                                    Kirigami.Icon {
+                                        source: root.providerIconSource(modelData.provider)
+                                        isMask: true
+                                        color: Kirigami.Theme.textColor
+                                        implicitWidth: Kirigami.Units.iconSizes.medium
+                                        implicitHeight: Kirigami.Units.iconSizes.medium
+                                        anchors.centerIn: parent
+                                    }
                                 }
 
                                 PlasmaComponents.Label {
@@ -991,25 +1222,18 @@ PlasmoidItem {
                                     text: modelData.name || modelData.provider
                                     horizontalAlignment: Text.AlignHCenter
                                     font.pointSize: Kirigami.Theme.smallFont.pointSize
-                                    font.weight: index === 0 ? Font.DemiBold : Font.Normal
-                                    color: index === 0 ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                                    font.weight: isSelected ? Font.DemiBold : Font.Normal
+                                    color: Kirigami.Theme.textColor
                                     elide: Text.ElideRight
                                     Layout.fillWidth: true
                                 }
+                            }
 
-                                Rectangle {
-                                    Layout.fillWidth: true
-                                    Layout.preferredHeight: 4
-                                    radius: height / 2
-                                    color: Qt.rgba(Kirigami.Theme.disabledTextColor.r, Kirigami.Theme.disabledTextColor.g, Kirigami.Theme.disabledTextColor.b, 0.28)
-                                    clip: true
-
-                                    Rectangle {
-                                        width: parent.width * used / 100
-                                        height: parent.height
-                                        radius: parent.radius
-                                        color: index === 0 ? Kirigami.Theme.highlightedTextColor : root.usageAccent(modelData.primaryPercentLeft)
-                                    }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: {
+                                    root.selectedEntryIndex = index
+                                    root.scrollToTop()
                                 }
                             }
                         }
@@ -1045,6 +1269,7 @@ PlasmoidItem {
                 visible: root.entries.length > 0
                 clip: true
                 Layout.fillWidth: true
+                Layout.alignment: Qt.AlignTop
                 Layout.preferredHeight: Math.min(contentList.implicitHeight, Kirigami.Units.gridUnit * 32)
                 Layout.fillHeight: contentList.implicitHeight > Kirigami.Units.gridUnit * 32
 
@@ -1059,7 +1284,7 @@ PlasmoidItem {
                     spacing: Kirigami.Units.largeSpacing
 
                     Repeater {
-                        model: root.entries
+                        model: root.selectedEntries()
 
                         delegate: ColumnLayout {
                             Layout.fillWidth: true
@@ -1163,6 +1388,55 @@ PlasmoidItem {
                                         color: Kirigami.Theme.disabledTextColor
                                         wrapMode: Text.WordWrap
                                         Layout.fillWidth: true
+                                    }
+                                }
+                            }
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                visible: modelData.codexResetCredits !== null
+                                spacing: Kirigami.Units.smallSpacing
+
+                                Kirigami.Heading {
+                                    text: i18n("Rate-limit resets")
+                                    level: 4
+                                    Layout.fillWidth: true
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Kirigami.Units.smallSpacing
+
+                                    PlasmaComponents.Label {
+                                        text: i18n("Available")
+                                        Layout.fillWidth: true
+                                    }
+
+                                    PlasmaComponents.Label {
+                                        text: i18np("%1 reset", "%1 resets", modelData.codexResetCredits
+                                            ? modelData.codexResetCredits.availableCount : 0)
+                                        color: Kirigami.Theme.disabledTextColor
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+
+                                RowLayout {
+                                    Layout.fillWidth: true
+                                    spacing: Kirigami.Units.smallSpacing
+                                    visible: modelData.codexResetCredits
+                                        && modelData.codexResetCredits.nextExpiresAt
+                                        && modelData.codexResetCredits.nextExpiresAt.length > 0
+
+                                    PlasmaComponents.Label {
+                                        text: i18n("Next expiry")
+                                        Layout.fillWidth: true
+                                    }
+
+                                    PlasmaComponents.Label {
+                                        text: root.formatExpiryTime(modelData.codexResetCredits
+                                            ? modelData.codexResetCredits.nextExpiresAt : "")
+                                        color: Kirigami.Theme.disabledTextColor
+                                        horizontalAlignment: Text.AlignRight
                                     }
                                 }
                             }
@@ -1356,11 +1630,16 @@ PlasmoidItem {
             root.errorMessage = ""
             root.errorDetail = ""
             root.generatedAt = new Date().toLocaleString(Qt.locale(), Locale.ShortFormat)
+            var visibleEntries = root.filterUnavailableEntries(result.entries)
             var updatedEntries = []
-            for (var i = 0; i < result.entries.length; i++) {
-                updatedEntries.push(root.withCostSummary(result.entries[i]))
+            for (var i = 0; i < visibleEntries.length; i++) {
+                updatedEntries.push(root.withCostSummary(visibleEntries[i]))
             }
             root.entries = updatedEntries
+            // Clamp selection, keep current tab if still valid.
+            if (root.selectedEntryIndex >= updatedEntries.length) {
+                root.selectedEntryIndex = 0
+            }
         }
     }
 
@@ -1406,6 +1685,7 @@ PlasmoidItem {
     onCodexbarCommandChanged: refresh()
     onSelectedProviderChanged: refresh()
     onSelectedSourceChanged: refresh()
+    onHideUnavailableProvidersChanged: refresh()
     onShowCostSummaryChanged: refreshCost()
     onShowCreditsInPanelChanged: panelText()
     onShowUsedPercentInPanelChanged: panelText()

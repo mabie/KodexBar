@@ -28,6 +28,8 @@ KCM.SimpleKCM {
     property bool cfg_includeStatusDefault
     property alias cfg_showCostSummary: showCostSummary.checked
     property bool cfg_showCostSummaryDefault
+    property alias cfg_hideUnavailableProviders: hideUnavailableProviders.checked
+    property bool cfg_hideUnavailableProvidersDefault
 
     function indexForValue(model, value) {
         for (var i = 0; i < model.count; i++) {
@@ -204,6 +206,11 @@ KCM.SimpleKCM {
                 QQC2.CheckBox {
                     id: showCostSummary
                     text: i18n("Show local cost summary")
+                }
+
+                QQC2.CheckBox {
+                    id: hideUnavailableProviders
+                    text: i18n("Hide unavailable providers")
                 }
             }
         }
