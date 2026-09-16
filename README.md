@@ -16,7 +16,7 @@ The widget intentionally uses the upstream `codexbar` CLI as its data source ins
 
 - **Panel visibility.** Show the active provider, used percent, and remaining credits directly in your KDE panel.
 - **CodexBar-compatible data.** Reads the same JSON payloads as the upstream app and Linux CLI.
-- **Local cost estimates.** Shows `codexbar cost` token and estimated-cost summaries when the upstream CLI can scan local logs.
+- **Local cost estimates.** Shows `codexbar cost` token and estimated-cost summaries when the upstream CLI can scan local logs, including a 30-day daily history graph with Cost/Tokens toggle and top models.
 - **Provider fallback.** `Best available` tries Linux-friendly source combinations before surfacing an error.
 - **Plasma-native UI.** Built as a Plasma 6 applet with Kirigami styling, provider icons, compact panel text, and a scrollable popup.
 
@@ -70,6 +70,7 @@ plasmashell --replace
 
 - Click the panel item to open the popup.
 - Click a provider chip at the top to switch between providers. The detail view below shows only the selected one.
+- Use the **Limits / Usage** pill at the bottom to switch views. Limits shows rate-limit windows, resets, credits, and status; Usage shows the local 30-day cost history graph with top models.
 - Each chip icon carries two usage rings. The upper ring is the 5-hour limit, the lower ring is the weekly limit. Ring color follows usage from green through yellow and orange to dark red.
 - Use the refresh button in the popup to query the CLI immediately.
 - Open widget settings to change provider, source, refresh cadence, and compact label fields.

@@ -33,6 +33,8 @@ PlasmoidItem {
     property bool showCostSummary: Plasmoid.configuration.showCostSummary === undefined ? true : Plasmoid.configuration.showCostSummary
     property bool hideUnavailableProviders: Plasmoid.configuration.hideUnavailableProviders === undefined ? true : Plasmoid.configuration.hideUnavailableProviders
     property int refreshSeconds: Math.max(10, Plasmoid.configuration.refreshInterval || 60)
+    property string costHistoryMetric: "cost"
+    property string currentTab: "limits"
 
     preferredRepresentation: compactRepresentation
     toolTipMainText: "KodexBar"
@@ -269,7 +271,7 @@ PlasmoidItem {
     }
 
     function costCommandLine() {
-        var command = shellQuote(codexbarCommand) + " cost --format json --json-only"
+        var command = shellQuote(codexbarCommand) + " cost --format json --json-only --days 30"
         if (selectedProvider && selectedProvider !== "detect") {
             command += " --provider " + shellQuote(selectedProvider)
         }
@@ -438,6 +440,17 @@ PlasmoidItem {
         return entry ? [entry] : []
     }
 
+    function selectTab(name) {
+        if (name !== "limits" && name !== "usage") {
+            return
+        }
+        if (currentTab === name) {
+            return
+        }
+        currentTab = name
+        scrollToTop()
+    }
+
     function scrollToTop() {
         // QQC2 ScrollView wraps content in a flickable; guard everything
         // so a missing internal API can never break tab switching.
@@ -561,17 +574,54 @@ PlasmoidItem {
         var todayTokens = typeof entry.sessionTokens === "number" ? entry.sessionTokens : null
         var dayKey = localDayKey(new Date())
         var daily = entry.daily instanceof Array ? entry.daily : []
+        var history = []
+        var modelTotals = {}
         for (var i = 0; i < daily.length; i++) {
-            if (daily[i] && daily[i].date === dayKey) {
-                if (typeof daily[i].totalCost === "number") {
-                    todayCost = daily[i].totalCost
+            var day = daily[i]
+            if (!day || typeof day !== "object" || !day.date) {
+                continue
+            }
+            var dayCost = typeof day.totalCost === "number" ? day.totalCost : 0
+            var dayTokens = typeof day.totalTokens === "number" ? day.totalTokens : 0
+            history.push({
+                date: String(day.date),
+                totalCost: dayCost,
+                totalTokens: dayTokens
+            })
+            if (day.date === dayKey) {
+                todayCost = dayCost
+                todayTokens = dayTokens
+            }
+            var breakdowns = day.modelBreakdowns instanceof Array ? day.modelBreakdowns : []
+            for (var m = 0; m < breakdowns.length; m++) {
+                var breakdown = breakdowns[m]
+                if (!breakdown || !breakdown.modelName) {
+                    continue
                 }
-                if (typeof daily[i].totalTokens === "number") {
-                    todayTokens = daily[i].totalTokens
+                var name = String(breakdown.modelName)
+                var agg = modelTotals[name] || { modelName: name, totalCost: 0, totalTokens: 0 }
+                if (typeof breakdown.cost === "number") {
+                    agg.totalCost += breakdown.cost
                 }
-                break
+                if (typeof breakdown.totalTokens === "number") {
+                    agg.totalTokens += breakdown.totalTokens
+                }
+                modelTotals[name] = agg
             }
         }
+        history.sort(function(a, b) { return a.date < b.date ? -1 : (a.date > b.date ? 1 : 0) })
+        var models = []
+        var currencyForModels = entry.currencyCode || "USD"
+        for (var key in modelTotals) {
+            modelTotals[key].currencyCode = currencyForModels
+            models.push(modelTotals[key])
+        }
+        models.sort(function(a, b) {
+            if (b.totalCost !== a.totalCost) {
+                return b.totalCost - a.totalCost
+            }
+            return b.totalTokens - a.totalTokens
+        })
         var totalCost = typeof entry.last30DaysCostUSD === "number"
             ? entry.last30DaysCostUSD
             : (entry.totals && typeof entry.totals.totalCost === "number" ? entry.totals.totalCost : null)
@@ -590,8 +640,55 @@ PlasmoidItem {
             todayTokens: todayTokens,
             totalCost: totalCost,
             totalTokens: totalTokens,
+            daily: history,
+            models: models.slice(0, 5),
             updatedAt: entry.updatedAt || ""
         }
+    }
+
+    function historySeries(summary, metric, days) {
+        var count = Math.max(7, Math.min(90, days || 30))
+        var byDate = {}
+        var input = summary && summary.daily instanceof Array ? summary.daily : []
+        for (var i = 0; i < input.length; i++) {
+            if (input[i] && input[i].date) {
+                byDate[input[i].date] = input[i]
+            }
+        }
+        var series = []
+        var today = new Date()
+        today.setHours(0, 0, 0, 0)
+        for (var d = count - 1; d >= 0; d--) {
+            var date = new Date(today.getTime() - d * 86400000)
+            var key = localDayKey(date)
+            var found = byDate[key]
+            series.push({
+                date: key,
+                value: found
+                    ? (metric === "tokens"
+                        ? (typeof found.totalTokens === "number" ? found.totalTokens : 0)
+                        : (typeof found.totalCost === "number" ? found.totalCost : 0))
+                    : 0
+            })
+        }
+        return series
+    }
+
+    function historyPeak(series) {
+        var peak = 0
+        for (var i = 0; i < series.length; i++) {
+            if (series[i].value > peak) {
+                peak = series[i].value
+            }
+        }
+        return peak
+    }
+
+    function formatMonthDay(dateStr) {
+        if (!dateStr || dateStr.length < 10) {
+            return ""
+        }
+        return dateStr.slice(5).replace("-", "/")
     }
 
     function costSummaryRows(summary) {
@@ -1335,6 +1432,7 @@ PlasmoidItem {
                                 model: modelData.rows || []
 
                                 delegate: ColumnLayout {
+                                    visible: root.currentTab === "limits"
                                     Layout.fillWidth: true
                                     spacing: Kirigami.Units.smallSpacing
 
@@ -1394,7 +1492,8 @@ PlasmoidItem {
 
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                visible: modelData.codexResetCredits !== null
+                                visible: root.currentTab === "limits"
+                                    && modelData.codexResetCredits !== null
                                 spacing: Kirigami.Units.smallSpacing
 
                                 Kirigami.Heading {
@@ -1453,15 +1552,35 @@ PlasmoidItem {
 
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                visible: root.showCostSummary
+                                visible: root.currentTab === "usage"
+                                    && root.showCostSummary
                                     && modelData.costSummary
                                     && root.costSummaryRows(modelData.costSummary).length > 0
                                 spacing: Kirigami.Units.smallSpacing
 
-                                Kirigami.Heading {
-                                    text: i18n("Cost")
-                                    level: 4
+                                RowLayout {
                                     Layout.fillWidth: true
+                                    spacing: Kirigami.Units.smallSpacing
+
+                                    Kirigami.Heading {
+                                        text: i18n("Cost")
+                                        level: 4
+                                        Layout.fillWidth: true
+                                    }
+
+                                    QQC2.ToolButton {
+                                        text: i18n("Cost")
+                                        checkable: true
+                                        checked: root.costHistoryMetric === "cost"
+                                        onClicked: root.costHistoryMetric = "cost"
+                                    }
+
+                                    QQC2.ToolButton {
+                                        text: i18n("Tokens")
+                                        checkable: true
+                                        checked: root.costHistoryMetric === "tokens"
+                                        onClicked: root.costHistoryMetric = "tokens"
+                                    }
                                 }
 
                                 Repeater {
@@ -1487,6 +1606,135 @@ PlasmoidItem {
                                     }
                                 }
 
+                                Canvas {
+                                    id: historyCanvas
+                                    visible: modelData.costSummary
+                                        && modelData.costSummary.daily
+                                        && modelData.costSummary.daily.length > 0
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 72
+                                    renderTarget: Canvas.FramebufferObject
+                                    property var series: root.historySeries(
+                                        modelData.costSummary,
+                                        root.costHistoryMetric,
+                                        modelData.costSummary ? modelData.costSummary.historyDays : 30)
+                                    property real peak: root.historyPeak(series)
+                                    onSeriesChanged: requestPaint()
+                                    onPeakChanged: requestPaint()
+                                    Component.onCompleted: requestPaint()
+                                    onPaint: {
+                                        var ctx = getContext("2d")
+                                        ctx.clearRect(0, 0, width, height)
+                                        if (!series || series.length === 0) {
+                                            return
+                                        }
+                                        var track = Qt.rgba(Kirigami.Theme.disabledTextColor.r,
+                                                            Kirigami.Theme.disabledTextColor.g,
+                                                            Kirigami.Theme.disabledTextColor.b, 0.22)
+                                        var fill = Kirigami.Theme.highlightColor
+                                        var n = series.length
+                                        var slot = width / n
+                                        var barW = Math.max(2, Math.min(10, slot * 0.62))
+                                        var base = height - 2
+                                        var maxH = height - 10
+                                        ctx.fillStyle = track
+                                        ctx.fillRect(0, base - 1, width, 1)
+                                        for (var i = 0; i < n; i++) {
+                                            var h = peak > 0 ? series[i].value / peak * maxH : 0
+                                            var x = i * slot + (slot - barW) / 2
+                                            if (h < 1 && series[i].value > 0) {
+                                                h = 1
+                                            }
+                                            if (h > 0) {
+                                                ctx.fillStyle = fill
+                                                ctx.fillRect(x, base - h, barW, h)
+                                            } else {
+                                                ctx.fillStyle = track
+                                                ctx.fillRect(x, base - 2, barW, 2)
+                                            }
+                                        }
+                                    }
+                                }
+
+                                RowLayout {
+                                    visible: modelData.costSummary
+                                        && modelData.costSummary.daily
+                                        && modelData.costSummary.daily.length > 0
+                                    Layout.fillWidth: true
+                                    spacing: Kirigami.Units.smallSpacing
+
+                                    PlasmaComponents.Label {
+                                        text: {
+                                            var s = historyCanvas.series
+                                            return s && s.length > 0 ? root.formatMonthDay(s[0].date) : ""
+                                        }
+                                        color: Kirigami.Theme.disabledTextColor
+                                        font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                        Layout.fillWidth: true
+                                        horizontalAlignment: Text.AlignLeft
+                                    }
+
+                                    PlasmaComponents.Label {
+                                        text: {
+                                            var peak = historyCanvas.peak
+                                            if (!(peak > 0)) {
+                                                return i18n("No activity")
+                                            }
+                                            if (root.costHistoryMetric === "tokens") {
+                                                return i18n("Peak %1", root.formatTokenCount(peak))
+                                            }
+                                            var code = modelData.costSummary ? modelData.costSummary.currencyCode : "USD"
+                                            return i18n("Peak %1", root.formatCurrency(peak, code))
+                                        }
+                                        color: Kirigami.Theme.disabledTextColor
+                                        font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                        horizontalAlignment: Text.AlignHCenter
+                                        Layout.fillWidth: true
+                                    }
+
+                                    PlasmaComponents.Label {
+                                        text: {
+                                            var s2 = historyCanvas.series
+                                            return s2 && s2.length > 0 ? root.formatMonthDay(s2[s2.length - 1].date) : ""
+                                        }
+                                        color: Kirigami.Theme.disabledTextColor
+                                        font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                        Layout.fillWidth: true
+                                        horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+
+                                Repeater {
+                                    model: modelData.costSummary && modelData.costSummary.models
+                                        ? modelData.costSummary.models.slice(0, 3)
+                                        : []
+
+                                    delegate: RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Kirigami.Units.smallSpacing
+
+                                        PlasmaComponents.Label {
+                                            text: modelData.modelName
+                                            color: Kirigami.Theme.textColor
+                                            elide: Text.ElideRight
+                                            Layout.fillWidth: true
+                                            font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                        }
+
+                                        PlasmaComponents.Label {
+                                            text: root.formatCostAndTokens(
+                                                modelData.totalCost,
+                                                modelData.totalTokens,
+                                                modelData.currencyCode || "USD")
+                                            color: Kirigami.Theme.disabledTextColor
+                                            font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                            horizontalAlignment: Text.AlignRight
+                                            elide: Text.ElideRight
+                                            Layout.maximumWidth: Kirigami.Units.gridUnit * 16
+                                        }
+                                    }
+                                }
+
                                 PlasmaComponents.Label {
                                     visible: modelData.costSummary
                                         && modelData.costSummary.source
@@ -1503,7 +1751,8 @@ PlasmoidItem {
 
                             RowLayout {
                                 Layout.fillWidth: true
-                                visible: modelData.creditsRemaining !== null
+                                visible: root.currentTab === "limits"
+                                    && modelData.creditsRemaining !== null
                                     && modelData.creditsRemaining !== undefined
 
                                 ColumnLayout {
@@ -1534,7 +1783,8 @@ PlasmoidItem {
 
                             ColumnLayout {
                                 Layout.fillWidth: true
-                                visible: modelData.dashboardSummary && modelData.dashboardSummary.length > 0
+                                visible: root.currentTab === "limits"
+                                    && modelData.dashboardSummary && modelData.dashboardSummary.length > 0
                                 spacing: Kirigami.Units.smallSpacing
 
                                 Kirigami.Heading {
@@ -1556,7 +1806,8 @@ PlasmoidItem {
                             }
 
                             PlasmaComponents.Label {
-                                visible: root.showCostSummary
+                                visible: root.currentTab === "usage"
+                                    && root.showCostSummary
                                     && root.costErrorMessage.length > 0
                                     && (!modelData.costSummary)
                                 text: root.costErrorMessage
@@ -1566,9 +1817,91 @@ PlasmoidItem {
                                 Layout.fillWidth: true
                             }
 
+                            PlasmaComponents.Label {
+                                visible: root.currentTab === "usage"
+                                    && (!modelData.costSummary)
+                                    && root.costErrorMessage.length === 0
+                                text: !root.showCostSummary
+                                    ? i18n("Enable \"Show local cost summary\" in widget settings to see usage history.")
+                                    : i18n("No local usage history for this provider yet.")
+                                color: Kirigami.Theme.disabledTextColor
+                                wrapMode: Text.WordWrap
+                                font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                Layout.fillWidth: true
+                            }
+
                             Kirigami.Separator {
                                 visible: index < root.entries.length - 1
                                 Layout.fillWidth: true
+                            }
+                        }
+                    }
+                }
+            }
+
+            Item {
+                visible: root.entries.length > 0
+                Layout.fillWidth: true
+                Layout.preferredHeight: Kirigami.Units.gridUnit * 1.75
+                Layout.alignment: Qt.AlignBottom
+
+                Rectangle {
+                    id: tabPill
+                    width: Math.min(parent.width, Kirigami.Units.gridUnit * 12)
+                    height: parent.height
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    radius: height / 2
+                    color: Qt.rgba(Kirigami.Theme.disabledTextColor.r,
+                                    Kirigami.Theme.disabledTextColor.g,
+                                    Kirigami.Theme.disabledTextColor.b, 0.16)
+
+                    Rectangle {
+                        id: tabThumb
+                        width: (parent.width - 6) / 2
+                        height: parent.height - 6
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: root.currentTab === "usage" ? width + 3 : 3
+                        radius: height / 2
+                        color: Kirigami.Theme.highlightColor
+                        Behavior on x {
+                            NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                        }
+                    }
+
+                    Row {
+                        anchors.fill: parent
+
+                        Item {
+                            width: parent.width / 2
+                            height: parent.height
+
+                            PlasmaComponents.Label {
+                                anchors.centerIn: parent
+                                text: i18n("Limits")
+                                font.weight: root.currentTab === "limits" ? Font.DemiBold : Font.Normal
+                                color: root.currentTab === "limits" ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: root.selectTab("limits")
+                            }
+                        }
+
+                        Item {
+                            width: parent.width / 2
+                            height: parent.height
+
+                            PlasmaComponents.Label {
+                                anchors.centerIn: parent
+                                text: i18n("Usage")
+                                font.weight: root.currentTab === "usage" ? Font.DemiBold : Font.Normal
+                                color: root.currentTab === "usage" ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
+                            }
+
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: root.selectTab("usage")
                             }
                         }
                     }
