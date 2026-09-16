@@ -10,8 +10,7 @@ KodexBar is a native KDE Plasma widget inspired by [CodexBar](https://github.com
 
 The widget intentionally uses the upstream `codexbar` CLI as its data source instead of reimplementing provider backends. CodexBar owns auth, provider config, API calls, local CLI probing, and `~/.codexbar/config.json`; KodexBar focuses on the Plasma panel and popup UI.
 
-![KodexBar widget in light mode](assets/screenshot-light.png)
-![KodexBar widget in dark mode](assets/screenshot-dark.png)
+![KodexBar widget in light and dark mode](assets/screenshot.png)
 
 ## Why
 
