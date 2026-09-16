@@ -10,7 +10,8 @@ KodexBar is a native KDE Plasma widget inspired by [CodexBar](https://github.com
 
 The widget intentionally uses the upstream `codexbar` CLI as its data source instead of reimplementing provider backends. CodexBar owns auth, provider config, API calls, local CLI probing, and `~/.codexbar/config.json`; KodexBar focuses on the Plasma panel and popup UI.
 
-![KodexBar widget screenshot](screenshot.png)
+![KodexBar widget in light mode](screenshot-light.png)
+![KodexBar widget in dark mode](screenshot-dark.png)
 
 ## Why
 
@@ -69,15 +70,18 @@ plasmashell --replace
 ## Usage
 
 - Click the panel item to open the popup.
+- Click a provider chip at the top to switch between providers. The detail view below shows only the selected one.
+- Each chip icon carries two usage rings. The upper ring is the 5-hour limit, the lower ring is the weekly limit. Ring color follows usage from green through yellow and orange to dark red.
 - Use the refresh button in the popup to query the CLI immediately.
 - Open widget settings to change provider, source, refresh cadence, and compact label fields.
 - Leave Provider as `Best available` if you want KodexBar to find the first usable Linux-capable provider/source combination.
-- Choose `All enabled` to ask the CLI for all providers enabled in `~/.codexbar/config.json`.
+- Choose `All enabled` with Source `Auto` to show every working provider as its own tab. Pair it with Hide unavailable providers to keep unconfigured providers out of the list.
 
 The popup renders common CodexBar CLI fields:
 
 - session, weekly, tertiary, and extra rate-limit windows
 - reset countdowns and usage bars
+- Codex rate-limit reset credits, including available count and earliest expiry
 - provider spend/budget rows
 - credit balances
 - OpenAI dashboard summaries where present
@@ -101,6 +105,8 @@ KodexBar exposes these Plasma widget settings:
 | Show credits in panel | Include remaining credits in the compact label when available. |
 | Show email in widget | Show the account email inside the popup when available. |
 | Fetch provider status | Add `--status` to CLI calls and display incident/maintenance state. |
+| Show local cost summary | Show `codexbar cost` token and cost estimates when available. |
+| Hide unavailable providers | Hide providers that return errors when showing all providers at once. |
 
 Provider credentials and provider toggles are still controlled by the CodexBar CLI config at `~/.codexbar/config.json`.
 
@@ -144,6 +150,10 @@ If the widget shows a CLI error, either install the CLI, configure provider cred
 | Provider works in terminal but not in the widget | Use an absolute command path in settings if Plasma does not inherit your shell `PATH`. |
 | `Best available` picks the wrong provider | Select the provider explicitly in settings. |
 | Status never appears | Enable **Fetch provider status** in widget settings. |
+
+## Acknowledgments
+
+This is a fork of [tylxr59/KodexBar](https://github.com/tylxr59/KodexBar), which builds on the [CodexBar](https://github.com/steipete/CodexBar) CLI by Peter Steinberger. Provider data, auth, and usage APIs all come from upstream. This fork adds its own popup UI ideas on top.
 
 ## License
 
