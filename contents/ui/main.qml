@@ -1700,6 +1700,40 @@ PlasmoidItem {
                                     Layout.fillWidth: true
                                     Layout.preferredHeight: Kirigami.Units.gridUnit * 6
 
+                                    function startReveal() {
+                                        revealAnimation.restart()
+                                    }
+
+                                    Connections {
+                                        target: root
+
+                                        function onExpandedChanged() {
+                                            if (root.expanded && root.currentTab === "usage") {
+                                                historyChart.startReveal()
+                                            }
+                                        }
+
+                                        function onCurrentTabChanged() {
+                                            if (root.expanded && root.currentTab === "usage") {
+                                                historyChart.startReveal()
+                                            }
+                                        }
+
+                                        function onCostHistoryMetricChanged() {
+                                            historyChart.startReveal()
+                                        }
+                                    }
+
+                                    NumberAnimation {
+                                        id: revealAnimation
+                                        target: historyCanvas
+                                        property: "revealProgress"
+                                        from: 0
+                                        to: 1
+                                        duration: 900
+                                        easing.type: Easing.OutCubic
+                                    }
+
                                     Canvas {
                                         id: historyCanvas
                                         anchors.fill: parent
@@ -1710,9 +1744,11 @@ PlasmoidItem {
                                             modelData.costSummary ? modelData.costSummary.historyDays : 30)
                                         property real peak: root.historyPeak(series)
                                         property int hoveredIndex: -1
+                                        property real revealProgress: 1
                                         onSeriesChanged: requestPaint()
                                         onPeakChanged: requestPaint()
                                         onHoveredIndexChanged: requestPaint()
+                                        onRevealProgressChanged: requestPaint()
                                         Component.onCompleted: requestPaint()
                                         onPaint: {
                                             var ctx = getContext("2d")
@@ -1735,8 +1771,11 @@ PlasmoidItem {
                                             for (var i = 0; i < n; i++) {
                                                 var h = peak > 0 ? series[i].value / peak * maxH : 0
                                                 var x = i * slot + (slot - barW) / 2
-                                                if (h < 1 && series[i].value > 0) {
-                                                    h = 1
+                                                if (h > 0) {
+                                                    if (h < 1) {
+                                                        h = 1
+                                                    }
+                                                    h = h * revealProgress
                                                 }
                                                 if (h > 0) {
                                                     ctx.fillStyle = i === hoveredIndex ? hoverFill : fill
@@ -1911,6 +1950,7 @@ PlasmoidItem {
 
                                     delegate: RowLayout {
                                         Layout.fillWidth: true
+                                        Layout.topMargin: index === 0 ? Kirigami.Units.largeSpacing : 0
                                         spacing: Kirigami.Units.smallSpacing
 
                                         PlasmaComponents.Label {
@@ -2028,13 +2068,6 @@ PlasmoidItem {
                                 wrapMode: Text.WordWrap
                                 font.pointSize: Kirigami.Theme.smallFont.pointSize
                                 Layout.fillWidth: true
-                            }
-
-                            Kirigami.Separator {
-                                visible: index < root.entries.length - 1
-                                Layout.fillWidth: true
-                                Layout.topMargin: Kirigami.Units.smallSpacing
-                                Layout.bottomMargin: Kirigami.Units.smallSpacing
                             }
                         }
                     }
