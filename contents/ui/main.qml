@@ -684,11 +684,31 @@ PlasmoidItem {
         return peak
     }
 
+    function historyPeakDate(series) {
+        var peak = historyPeak(series)
+        if (!(peak > 0)) {
+            return ""
+        }
+        for (var i = 0; i < series.length; i++) {
+            if (series[i].value === peak) {
+                return series[i].date
+            }
+        }
+        return ""
+    }
+
     function formatMonthDay(dateStr) {
         if (!dateStr || dateStr.length < 10) {
             return ""
         }
-        return dateStr.slice(5).replace("-", "/")
+        var parts = dateStr.split("-")
+        var date = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
+        // Drop the year from the locale's short date format.
+        var format = Qt.locale().dateFormat(Locale.ShortFormat)
+            .replace(/[yY]+/g, "")
+            .replace(/^[^A-Za-z]+/, "")
+            .replace(/[^A-Za-z]+$/, "")
+        return Qt.locale().toString(date, format)
     }
 
     function formatTooltipDate(dateStr) {
@@ -1246,117 +1266,161 @@ PlasmoidItem {
                 Layout.alignment: Qt.AlignTop
                 spacing: Kirigami.Units.smallSpacing
 
-                RowLayout {
-                    spacing: Kirigami.Units.smallSpacing
+                Item {
+                    id: chipStrip
                     Layout.fillWidth: true
                     Layout.alignment: Qt.AlignTop
+                    implicitHeight: chips.implicitHeight
 
-                    Repeater {
-                        model: root.entries.length > 0 ? root.entries : [{ name: "KodexBar", provider: "kodexbar", primaryPercentLeft: null }]
+                    RowLayout {
+                        id: chips
+                        anchors.left: parent.left
+                        anchors.top: parent.top
+                        width: implicitWidth
+                        spacing: Kirigami.Units.smallSpacing
 
-                        delegate: Rectangle {
-                            readonly property bool isSelected: index === root.selectedEntryIndex
-                            readonly property color severity5: root.usageSeverityColor(root.usedValue(modelData.primaryPercentLeft))
-                            readonly property color severityWeekly: root.usageSeverityColor(root.usedValue(modelData.secondaryPercentLeft))
-                            Layout.preferredWidth: Math.max(Kirigami.Units.gridUnit * 4.25, chipLabel.implicitWidth + Kirigami.Units.largeSpacing * 2)
-                            Layout.preferredHeight: chipContent.implicitHeight + Kirigami.Units.smallSpacing * 2
-                            radius: Kirigami.Units.cornerRadius
-                            color: "transparent"
-                            border.width: 1
-                            border.color: isSelected ? Kirigami.Theme.highlightColor : "transparent"
-                            opacity: modelData.errorMessage ? 0.62 : 1
-                            onSeverity5Changed: ringCanvas.requestPaint()
-                            onSeverityWeeklyChanged: ringCanvas.requestPaint()
+                        Repeater {
+                            id: chipRepeater
+                            model: root.entries.length > 0 ? root.entries : [{ name: "KodexBar", provider: "kodexbar", primaryPercentLeft: null }]
 
-                            ColumnLayout {
-                                id: chipContent
-                                anchors.fill: parent
-                                anchors.margins: Kirigami.Units.smallSpacing
-                                spacing: Kirigami.Units.smallSpacing / 2
+                            delegate: Rectangle {
+                                readonly property bool isSelected: index === root.selectedEntryIndex
+                                readonly property color severity5: root.usageSeverityColor(root.usedValue(modelData.primaryPercentLeft))
+                                readonly property color severityWeekly: root.usageSeverityColor(root.usedValue(modelData.secondaryPercentLeft))
+                                Layout.preferredWidth: Math.max(Kirigami.Units.gridUnit * 4.25, chipLabel.implicitWidth + Kirigami.Units.largeSpacing * 2)
+                                Layout.preferredHeight: chipContent.implicitHeight + Kirigami.Units.smallSpacing * 2
+                                radius: Kirigami.Units.cornerRadius
+                                color: "transparent"
+                                opacity: modelData.errorMessage ? 0.62 : 1
+                                onSeverity5Changed: ringCanvas.requestPaint()
+                                onSeverityWeeklyChanged: ringCanvas.requestPaint()
 
-                                Item {
-                                    readonly property int ringStroke: 4
-                                    readonly property real ringGapAngle: 0.26
-                                    readonly property int ringPad: 3
-                                    readonly property int iconPx: Kirigami.Units.iconSizes.medium
-                                    // One shared radius for both semicircles. They stay
-                                    // separated through the angular gap at 3 and 9 o'clock.
-                                    readonly property real rRing: iconPx / 2 + 8 + ringStroke / 2
-                                    implicitWidth: (rRing + ringStroke / 2 + ringPad) * 2
-                                    implicitHeight: (rRing + ringStroke / 2 + ringPad) * 2
-                                    Layout.alignment: Qt.AlignHCenter
-                                    Layout.preferredWidth: implicitWidth
-                                    Layout.preferredHeight: implicitHeight
+                                ColumnLayout {
+                                    id: chipContent
+                                    anchors.fill: parent
+                                    anchors.margins: Kirigami.Units.smallSpacing
+                                    spacing: Kirigami.Units.smallSpacing / 2
 
-                                    Canvas {
-                                        id: ringCanvas
-                                        anchors.fill: parent
-                                        renderTarget: Canvas.FramebufferObject
-                                        onPaint: {
-                                            var ctx = getContext("2d")
-                                            ctx.clearRect(0, 0, width, height)
-                                            var cx = width / 2
-                                            var cy = height / 2
-                                            var gap = parent.ringGapAngle
-                                            var span = Math.PI - 2 * gap
-                                            var track = Qt.rgba(Kirigami.Theme.disabledTextColor.r,
-                                                                Kirigami.Theme.disabledTextColor.g,
-                                                                Kirigami.Theme.disabledTextColor.b, 0.3)
-                                            function strokeArc(from, to, color, ccw) {
-                                                ctx.beginPath()
-                                                ctx.arc(cx, cy, parent.rRing, from, to, !!ccw)
-                                                ctx.lineWidth = parent.ringStroke
-                                                ctx.strokeStyle = color
-                                                ctx.lineCap = "round"
-                                                ctx.stroke()
+                                    Item {
+                                        readonly property int ringStroke: 4
+                                        readonly property real ringGapAngle: 0.26
+                                        readonly property int ringPad: 3
+                                        readonly property int iconPx: Kirigami.Units.iconSizes.medium
+                                        // One shared radius for both semicircles. They stay
+                                        // separated through the angular gap at 3 and 9 o'clock.
+                                        readonly property real rRing: iconPx / 2 + 8 + ringStroke / 2
+                                        implicitWidth: (rRing + ringStroke / 2 + ringPad) * 2
+                                        implicitHeight: (rRing + ringStroke / 2 + ringPad) * 2
+                                        Layout.alignment: Qt.AlignHCenter
+                                        Layout.preferredWidth: implicitWidth
+                                        Layout.preferredHeight: implicitHeight
+
+                                        Canvas {
+                                            id: ringCanvas
+                                            anchors.fill: parent
+                                            renderTarget: Canvas.FramebufferObject
+                                            onPaint: {
+                                                var ctx = getContext("2d")
+                                                ctx.clearRect(0, 0, width, height)
+                                                var cx = width / 2
+                                                var cy = height / 2
+                                                var gap = parent.ringGapAngle
+                                                var span = Math.PI - 2 * gap
+                                                var track = Qt.rgba(Kirigami.Theme.disabledTextColor.r,
+                                                                    Kirigami.Theme.disabledTextColor.g,
+                                                                    Kirigami.Theme.disabledTextColor.b, 0.3)
+                                                function strokeArc(from, to, color, ccw) {
+                                                    ctx.beginPath()
+                                                    ctx.arc(cx, cy, parent.rRing, from, to, !!ccw)
+                                                    ctx.lineWidth = parent.ringStroke
+                                                    ctx.strokeStyle = color
+                                                    ctx.lineCap = "round"
+                                                    ctx.stroke()
+                                                }
+                                                // Upper semicircle: 5-hour limit, lower: weekly limit.
+                                                // Canvas angles run clockwise from 3 o'clock.
+                                                // Both fills run left to right: upper starts at
+                                                // 9 o'clock going over the top, lower starts at
+                                                // 9 o'clock going counterclockwise along the bottom.
+                                                strokeArc(Math.PI + gap, 2 * Math.PI - gap, track)
+                                                var u5 = root.usedValue(modelData.primaryPercentLeft)
+                                                if (u5 !== null && u5 > 0) {
+                                                    strokeArc(Math.PI + gap, Math.PI + gap + Math.min(100, u5) / 100 * span, severity5)
+                                                }
+                                                strokeArc(gap, Math.PI - gap, track)
+                                                var uw = root.usedValue(modelData.secondaryPercentLeft)
+                                                if (uw !== null && uw > 0) {
+                                                    strokeArc(Math.PI - gap, Math.PI - gap - Math.min(100, uw) / 100 * span, severityWeekly, true)
+                                                }
                                             }
-                                            // Upper semicircle: 5-hour limit, lower: weekly limit.
-                                            // Canvas angles run clockwise from 3 o'clock.
-                                            // Both fills run left to right: upper starts at
-                                            // 9 o'clock going over the top, lower starts at
-                                            // 9 o'clock going counterclockwise along the bottom.
-                                            strokeArc(Math.PI + gap, 2 * Math.PI - gap, track)
-                                            var u5 = root.usedValue(modelData.primaryPercentLeft)
-                                            if (u5 !== null && u5 > 0) {
-                                                strokeArc(Math.PI + gap, Math.PI + gap + Math.min(100, u5) / 100 * span, severity5)
-                                            }
-                                            strokeArc(gap, Math.PI - gap, track)
-                                            var uw = root.usedValue(modelData.secondaryPercentLeft)
-                                            if (uw !== null && uw > 0) {
-                                                strokeArc(Math.PI - gap, Math.PI - gap - Math.min(100, uw) / 100 * span, severityWeekly, true)
-                                            }
+                                        }
+
+                                        Kirigami.Icon {
+                                            source: root.providerIconSource(modelData.provider)
+                                            isMask: true
+                                            color: Kirigami.Theme.textColor
+                                            implicitWidth: Kirigami.Units.iconSizes.medium
+                                            implicitHeight: Kirigami.Units.iconSizes.medium
+                                            anchors.centerIn: parent
                                         }
                                     }
 
-                                    Kirigami.Icon {
-                                        source: root.providerIconSource(modelData.provider)
-                                        isMask: true
+                                    PlasmaComponents.Label {
+                                        id: chipLabel
+                                        text: modelData.name || modelData.provider
+                                        horizontalAlignment: Text.AlignHCenter
+                                        font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                        font.weight: isSelected ? Font.DemiBold : Font.Normal
                                         color: Kirigami.Theme.textColor
-                                        implicitWidth: Kirigami.Units.iconSizes.medium
-                                        implicitHeight: Kirigami.Units.iconSizes.medium
-                                        anchors.centerIn: parent
+                                        elide: Text.ElideRight
+                                        Layout.fillWidth: true
                                     }
                                 }
 
-                                PlasmaComponents.Label {
-                                    id: chipLabel
-                                    text: modelData.name || modelData.provider
-                                    horizontalAlignment: Text.AlignHCenter
-                                    font.pointSize: Kirigami.Theme.smallFont.pointSize
-                                    font.weight: isSelected ? Font.DemiBold : Font.Normal
-                                    color: Kirigami.Theme.textColor
-                                    elide: Text.ElideRight
-                                    Layout.fillWidth: true
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        root.selectedEntryIndex = index
+                                        root.scrollToTop()
+                                    }
                                 }
                             }
+                        }
+                    }
 
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: {
-                                    root.selectedEntryIndex = index
-                                    root.scrollToTop()
-                                }
+                    Rectangle {
+                        id: chipSelection
+                        readonly property var target: {
+                            // Touch entries so the binding refreshes when the model is rebuilt.
+                            var entryList = root.entries
+                            var chipCount = chipRepeater.count
+                            if (chipCount === 0) {
+                                return null
                             }
+                            return chipRepeater.itemAt(Math.max(0, Math.min(root.selectedEntryIndex, chipCount - 1)))
+                        }
+                        visible: target !== null
+                        x: target ? target.x : 0
+                        y: target ? target.y : 0
+                        width: target ? target.width : 0
+                        height: target ? target.height : 0
+                        opacity: target ? target.opacity : 1
+                        radius: Kirigami.Units.cornerRadius
+                        color: "transparent"
+                        border.width: 1
+                        border.color: Kirigami.Theme.highlightColor
+
+                        Behavior on x {
+                            NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on y {
+                            NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on width {
+                            NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+                        }
+                        Behavior on height {
+                            NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
                         }
                     }
                 }
@@ -1450,6 +1514,8 @@ PlasmoidItem {
 
                             Kirigami.Separator {
                                 Layout.fillWidth: true
+                                Layout.topMargin: Kirigami.Units.smallSpacing
+                                Layout.bottomMargin: Kirigami.Units.smallSpacing
                             }
 
                             Repeater {
@@ -1592,18 +1658,14 @@ PlasmoidItem {
                                         Layout.fillWidth: true
                                     }
 
-                                    QQC2.ToolButton {
-                                        text: i18n("Cost")
-                                        checkable: true
-                                        checked: root.costHistoryMetric === "cost"
-                                        onClicked: root.costHistoryMetric = "cost"
-                                    }
-
-                                    QQC2.ToolButton {
-                                        text: i18n("Tokens")
-                                        checkable: true
-                                        checked: root.costHistoryMetric === "tokens"
-                                        onClicked: root.costHistoryMetric = "tokens"
+                                    SegmentedPill {
+                                        Layout.alignment: Qt.AlignVCenter
+                                        items: [
+                                            { text: i18n("Cost"), value: "cost" },
+                                            { text: i18n("Tokens"), value: "tokens" }
+                                        ]
+                                        currentValue: root.costHistoryMetric
+                                        onActivated: function(value) { root.costHistoryMetric = value }
                                     }
                                 }
 
@@ -1636,7 +1698,7 @@ PlasmoidItem {
                                         && modelData.costSummary.daily
                                         && modelData.costSummary.daily.length > 0
                                     Layout.fillWidth: true
-                                    Layout.preferredHeight: 72
+                                    Layout.preferredHeight: Kirigami.Units.gridUnit * 6
 
                                     Canvas {
                                         id: historyCanvas
@@ -1817,11 +1879,12 @@ PlasmoidItem {
                                             if (!(peak > 0)) {
                                                 return i18n("No activity")
                                             }
+                                            var peakDate = root.formatMonthDay(root.historyPeakDate(historyCanvas.series))
                                             if (root.costHistoryMetric === "tokens") {
-                                                return i18n("Peak %1", root.formatTokenCount(peak))
+                                                return i18n("Peak %1 (%2)", root.formatTokenCount(peak), peakDate)
                                             }
                                             var code = modelData.costSummary ? modelData.costSummary.currencyCode : "USD"
-                                            return i18n("Peak %1", root.formatCurrency(peak, code))
+                                            return i18n("Peak %1 (%2)", root.formatCurrency(peak, code), peakDate)
                                         }
                                         color: Kirigami.Theme.disabledTextColor
                                         font.pointSize: Kirigami.Theme.smallFont.pointSize
@@ -1855,7 +1918,7 @@ PlasmoidItem {
                                             color: Kirigami.Theme.textColor
                                             elide: Text.ElideRight
                                             Layout.fillWidth: true
-                                            font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                            font.pointSize: Kirigami.Theme.smallFont.pointSize + 1
                                         }
 
                                         PlasmaComponents.Label {
@@ -1864,7 +1927,7 @@ PlasmoidItem {
                                                 modelData.totalTokens,
                                                 modelData.currencyCode || "USD")
                                             color: Kirigami.Theme.disabledTextColor
-                                            font.pointSize: Kirigami.Theme.smallFont.pointSize
+                                            font.pointSize: Kirigami.Theme.smallFont.pointSize + 1
                                             horizontalAlignment: Text.AlignRight
                                             elide: Text.ElideRight
                                             Layout.maximumWidth: Kirigami.Units.gridUnit * 16
@@ -1970,6 +2033,8 @@ PlasmoidItem {
                             Kirigami.Separator {
                                 visible: index < root.entries.length - 1
                                 Layout.fillWidth: true
+                                Layout.topMargin: Kirigami.Units.smallSpacing
+                                Layout.bottomMargin: Kirigami.Units.smallSpacing
                             }
                         }
                     }
@@ -1982,66 +2047,17 @@ PlasmoidItem {
                 Layout.preferredHeight: Kirigami.Units.gridUnit * 1.75
                 Layout.alignment: Qt.AlignBottom
 
-                Rectangle {
+                SegmentedPill {
                     id: tabPill
                     width: Math.min(parent.width, Kirigami.Units.gridUnit * 12)
                     height: parent.height
                     anchors.horizontalCenter: parent.horizontalCenter
-                    radius: height / 2
-                    color: Qt.rgba(Kirigami.Theme.disabledTextColor.r,
-                                    Kirigami.Theme.disabledTextColor.g,
-                                    Kirigami.Theme.disabledTextColor.b, 0.16)
-
-                    Rectangle {
-                        id: tabThumb
-                        width: (parent.width - 6) / 2
-                        height: parent.height - 6
-                        anchors.verticalCenter: parent.verticalCenter
-                        x: root.currentTab === "usage" ? width + 3 : 3
-                        radius: height / 2
-                        color: Kirigami.Theme.highlightColor
-                        Behavior on x {
-                            NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
-                        }
-                    }
-
-                    Row {
-                        anchors.fill: parent
-
-                        Item {
-                            width: parent.width / 2
-                            height: parent.height
-
-                            PlasmaComponents.Label {
-                                anchors.centerIn: parent
-                                text: i18n("Limits")
-                                font.weight: root.currentTab === "limits" ? Font.DemiBold : Font.Normal
-                                color: root.currentTab === "limits" ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.selectTab("limits")
-                            }
-                        }
-
-                        Item {
-                            width: parent.width / 2
-                            height: parent.height
-
-                            PlasmaComponents.Label {
-                                anchors.centerIn: parent
-                                text: i18n("Usage")
-                                font.weight: root.currentTab === "usage" ? Font.DemiBold : Font.Normal
-                                color: root.currentTab === "usage" ? Kirigami.Theme.highlightedTextColor : Kirigami.Theme.textColor
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: root.selectTab("usage")
-                            }
-                        }
-                    }
+                    items: [
+                        { text: i18n("Limits"), value: "limits" },
+                        { text: i18n("Usage"), value: "usage" }
+                    ]
+                    currentValue: root.currentTab
+                    onActivated: function(value) { root.selectTab(value) }
                 }
             }
 
@@ -2052,6 +2068,76 @@ PlasmoidItem {
                 font.pointSize: Kirigami.Theme.smallFont.pointSize
                 elide: Text.ElideRight
                 Layout.fillWidth: true
+            }
+        }
+    }
+
+    component SegmentedPill: Rectangle {
+        id: pill
+
+        property var items: []
+        property string currentValue: ""
+        property real segmentWidth: Kirigami.Units.gridUnit * 3
+
+        signal activated(string value)
+
+        readonly property int segmentCount: items && items.length > 0 ? items.length : 1
+        readonly property int currentIndex: {
+            for (var i = 0; i < items.length; i++) {
+                if (items[i] && items[i].value === currentValue) {
+                    return i
+                }
+            }
+            return 0
+        }
+
+        implicitWidth: segmentWidth * segmentCount
+        implicitHeight: Kirigami.Units.gridUnit * 1.75
+        width: implicitWidth
+        height: implicitHeight
+        radius: height / 2
+        color: Qt.rgba(Kirigami.Theme.disabledTextColor.r,
+                       Kirigami.Theme.disabledTextColor.g,
+                       Kirigami.Theme.disabledTextColor.b, 0.16)
+
+        Rectangle {
+            id: thumb
+            width: (pill.width - 6) / pill.segmentCount
+            height: pill.height - 6
+            anchors.verticalCenter: parent.verticalCenter
+            x: 3 + pill.currentIndex * width
+            radius: height / 2
+            color: Kirigami.Theme.highlightColor
+
+            Behavior on x {
+                NumberAnimation { duration: 160; easing.type: Easing.OutCubic }
+            }
+        }
+
+        Row {
+            anchors.fill: parent
+
+            Repeater {
+                model: pill.items
+
+                delegate: Item {
+                    width: pill.width / pill.segmentCount
+                    height: pill.height
+
+                    PlasmaComponents.Label {
+                        anchors.centerIn: parent
+                        text: modelData.text
+                        font.weight: pill.currentValue === modelData.value ? Font.DemiBold : Font.Normal
+                        color: pill.currentValue === modelData.value
+                            ? Kirigami.Theme.highlightedTextColor
+                            : Kirigami.Theme.textColor
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        onClicked: pill.activated(modelData.value)
+                    }
+                }
             }
         }
     }
