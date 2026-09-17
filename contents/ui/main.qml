@@ -1658,14 +1658,18 @@ PlasmoidItem {
                                         Layout.fillWidth: true
                                     }
 
-                                    SegmentedPill {
-                                        Layout.alignment: Qt.AlignVCenter
-                                        items: [
-                                            { text: i18n("Cost"), value: "cost" },
-                                            { text: i18n("Tokens"), value: "tokens" }
-                                        ]
-                                        currentValue: root.costHistoryMetric
-                                        onActivated: function(value) { root.costHistoryMetric = value }
+                                    QQC2.ToolButton {
+                                        text: i18n("Cost")
+                                        checkable: true
+                                        checked: root.costHistoryMetric === "cost"
+                                        onClicked: root.costHistoryMetric = "cost"
+                                    }
+
+                                    QQC2.ToolButton {
+                                        text: i18n("Tokens")
+                                        checkable: true
+                                        checked: root.costHistoryMetric === "tokens"
+                                        onClicked: root.costHistoryMetric = "tokens"
                                     }
                                 }
 
