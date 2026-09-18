@@ -205,6 +205,17 @@ PlasmoidItem {
         return i18n("Expires in %1m", minutes)
     }
 
+    function formatExpiryDate(value) {
+        if (!value) {
+            return ""
+        }
+        var expiry = new Date(value)
+        if (isNaN(expiry.getTime())) {
+            return String(value)
+        }
+        return Qt.formatDate(expiry, Locale.ShortFormat)
+    }
+
     function resetTimeFromDescription(value) {
         if (!value) {
             return null
@@ -982,9 +993,25 @@ PlasmoidItem {
             return null
         }
 
+        var expirations = []
+        for (var k = 0; k < availableCredits.length; k++) {
+            var item = availableCredits[k]
+            var itemExpiresAt = item ? (item.expires_at || item.expiresAt || "") : ""
+            if (!itemExpiresAt) {
+                continue
+            }
+            var itemExpiry = new Date(itemExpiresAt)
+            if (isNaN(itemExpiry.getTime())) {
+                continue
+            }
+            expirations.push(itemExpiry.toISOString())
+        }
+        expirations.sort(function(a, b) { return new Date(a).getTime() - new Date(b).getTime() })
+
         return {
             availableCount: availableCount,
             nextExpiresAt: nextExpiresAt,
+            expirations: expirations,
             updatedAt: raw.updatedAt || ""
         }
     }
@@ -1268,8 +1295,9 @@ PlasmoidItem {
 
                 Item {
                     id: chipStrip
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignTop
+                    Layout.fillWidth: false
+                    Layout.alignment: Qt.AlignTop | Qt.AlignLeft
+                    implicitWidth: chips.implicitWidth
                     implicitHeight: chips.implicitHeight
 
                     RowLayout {
@@ -1430,6 +1458,7 @@ PlasmoidItem {
                     display: QQC2.AbstractButton.IconOnly
                     enabled: !root.loading
                     text: i18n("Refresh")
+                    Layout.alignment: Qt.AlignTop
                     onClicked: root.refresh()
                 }
             }
@@ -1581,6 +1610,8 @@ PlasmoidItem {
                             }
 
                             ColumnLayout {
+                                id: resetBlock
+                                property bool expanded: false
                                 Layout.fillWidth: true
                                 visible: root.currentTab === "limits"
                                     && modelData.codexResetCredits !== null
@@ -1592,27 +1623,53 @@ PlasmoidItem {
                                     Layout.fillWidth: true
                                 }
 
-                                RowLayout {
+                                Item {
                                     Layout.fillWidth: true
-                                    spacing: Kirigami.Units.smallSpacing
+                                    Layout.preferredHeight: availableRow.implicitHeight
 
-                                    PlasmaComponents.Label {
-                                        text: i18n("Available")
-                                        Layout.fillWidth: true
+                                    RowLayout {
+                                        id: availableRow
+                                        anchors.fill: parent
+                                        spacing: Kirigami.Units.smallSpacing
+
+                                        PlasmaComponents.Label {
+                                            text: i18n("Available")
+                                            Layout.fillWidth: true
+                                        }
+
+                                        PlasmaComponents.Label {
+                                            text: i18np("%1 reset", "%1 resets", modelData.codexResetCredits
+                                                ? modelData.codexResetCredits.availableCount : 0)
+                                            color: Kirigami.Theme.disabledTextColor
+                                            horizontalAlignment: Text.AlignRight
+                                        }
+
+                                        Kirigami.Icon {
+                                            source: "arrow-down"
+                                            isMask: true
+                                            implicitWidth: Kirigami.Units.iconSizes.small
+                                            implicitHeight: Kirigami.Units.iconSizes.small
+                                            color: Kirigami.Theme.disabledTextColor
+                                            Layout.alignment: Qt.AlignVCenter
+                                            rotation: resetBlock.expanded ? 180 : 0
+                                            Behavior on rotation {
+                                                NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+                                            }
+                                        }
                                     }
 
-                                    PlasmaComponents.Label {
-                                        text: i18np("%1 reset", "%1 resets", modelData.codexResetCredits
-                                            ? modelData.codexResetCredits.availableCount : 0)
-                                        color: Kirigami.Theme.disabledTextColor
-                                        horizontalAlignment: Text.AlignRight
+                                    MouseArea {
+                                        anchors.fill: parent
+                                        cursorShape: Qt.PointingHandCursor
+                                        onClicked: resetBlock.expanded = !resetBlock.expanded
                                     }
                                 }
 
                                 RowLayout {
                                     Layout.fillWidth: true
                                     spacing: Kirigami.Units.smallSpacing
-                                    visible: modelData.codexResetCredits
+                                    visible: !resetBlock.expanded
+                                        && modelData.codexResetCredits
                                         && modelData.codexResetCredits.nextExpiresAt
                                         && modelData.codexResetCredits.nextExpiresAt.length > 0
 
@@ -1626,6 +1683,68 @@ PlasmoidItem {
                                             ? modelData.codexResetCredits.nextExpiresAt : "")
                                         color: Kirigami.Theme.disabledTextColor
                                         horizontalAlignment: Text.AlignRight
+                                    }
+                                }
+
+                                Item {
+                                    id: resetsExpander
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: resetBlock.expanded ? expirationsColumn.implicitHeight : 0
+                                    Behavior on Layout.preferredHeight {
+                                        NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+                                    }
+                                    clip: true
+                                    opacity: resetBlock.expanded ? 1 : 0
+                                    Behavior on opacity {
+                                        NumberAnimation { duration: 200; easing.type: Easing.OutCubic }
+                                    }
+                                    visible: modelData.codexResetCredits
+                                        && ((modelData.codexResetCredits.expirations
+                                            && modelData.codexResetCredits.expirations.length > 0)
+                                            || (modelData.codexResetCredits.nextExpiresAt
+                                                && modelData.codexResetCredits.nextExpiresAt.length > 0))
+
+                                    ColumnLayout {
+                                        id: expirationsColumn
+                                        width: parent.width
+                                        spacing: Kirigami.Units.smallSpacing
+
+                                        Repeater {
+                                            model: {
+                                                var credits = modelData.codexResetCredits
+                                                if (!credits) {
+                                                    return []
+                                                }
+                                                if (credits.expirations && credits.expirations.length > 0) {
+                                                    return credits.expirations
+                                                }
+                                                if (credits.nextExpiresAt && credits.nextExpiresAt.length > 0) {
+                                                    return [credits.nextExpiresAt]
+                                                }
+                                                return []
+                                            }
+
+                                            delegate: RowLayout {
+                                                Layout.fillWidth: true
+                                                spacing: Kirigami.Units.smallSpacing
+
+                                                PlasmaComponents.Label {
+                                                    text: root.formatExpiryDate(modelData)
+                                                    color: Kirigami.Theme.disabledTextColor
+                                                    Layout.fillWidth: true
+                                                    Layout.leftMargin: Kirigami.Units.largeSpacing
+                                                    elide: Text.ElideRight
+                                                }
+
+                                                PlasmaComponents.Label {
+                                                    text: root.formatExpiryTime(modelData)
+                                                    color: Kirigami.Theme.disabledTextColor
+                                                    horizontalAlignment: Text.AlignRight
+                                                    elide: Text.ElideRight
+                                                    Layout.maximumWidth: Kirigami.Units.gridUnit * 12
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
