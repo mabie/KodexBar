@@ -1458,7 +1458,7 @@ PlasmoidItem {
                     display: QQC2.AbstractButton.IconOnly
                     enabled: !root.loading
                     text: i18n("Refresh")
-                    Layout.alignment: Qt.AlignTop
+                    Layout.alignment: Qt.AlignVCenter
                     onClicked: root.refresh()
                 }
             }
