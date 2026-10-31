@@ -19,6 +19,7 @@ PlasmoidItem {
     property string costErrorMessage: ""
     property var costSummaries: ({})
     property var codexResetCredits: null
+    property string codexResetCreditsAccount: ""
     property string codexbarCommand: Plasmoid.configuration.codexbarCommand || "codexbar"
     property string selectedProvider: Plasmoid.configuration.provider || "detect"
     property string selectedSource: Plasmoid.configuration.source || "detect"
@@ -482,7 +483,7 @@ PlasmoidItem {
         }
         executable.connectedSources = []
         costExecutable.connectedSources = []
-        codexResetCreditsExecutable.connectedSources = []
+        cancelCodexResetCredits()
         costLoading = false
         pendingCandidates = []
         finishFailedRefresh(true)
@@ -494,6 +495,7 @@ PlasmoidItem {
         if (force === false && loading) {
             return
         }
+        cancelCodexResetCredits()
         refreshWatchdog.restart()
         loading = true
         errorMessage = ""
@@ -792,6 +794,15 @@ PlasmoidItem {
         return copy
     }
 
+    // Supplementary results belong only to this refresh and a known account.
+    function cancelCodexResetCredits() {
+        codexResetCreditsWatchdog.stop()
+        codexResetCreditsExecutable.connectedSources = []
+        codexResetCredits = null
+        codexResetCreditsAccount = ""
+        applyCodexResetCredits()
+    }
+
     function withCodexResetCredits(entry) {
         // Credits the usage payload reported itself take precedence.
         if (!entry || typeof entry !== "object"
@@ -803,8 +814,10 @@ PlasmoidItem {
         for (var prop in entry) {
             copy[prop] = entry[prop]
         }
-        copy.codexResetCredits = codexResetCredits
-        copy.codexResetCreditsFetched = codexResetCredits !== null
+        var sameAccount = !!entry.account && !!codexResetCreditsAccount
+            && entry.account === codexResetCreditsAccount
+        copy.codexResetCredits = sameAccount ? codexResetCredits : null
+        copy.codexResetCreditsFetched = copy.codexResetCredits !== null
         return copy
     }
 
@@ -831,6 +844,7 @@ PlasmoidItem {
             if (String(entry.provider || "").toLowerCase() === "codex"
                     && !entry.errorMessage && !entry.codexResetCredits) {
                 codexResetCreditsExecutable.connectedSources = []
+                codexResetCreditsWatchdog.restart()
                 codexResetCreditsExecutable.connectSource(codexResetCreditsCommandLine())
                 return
             }
@@ -1830,17 +1844,21 @@ PlasmoidItem {
                 return
             }
             disconnectSource(sourceName)
+            codexResetCreditsWatchdog.stop()
             var result = root.parsePayload(data.stdout || "")
             var credits = null
+            var account = ""
             if (result.ok) {
                 for (var i = 0; i < result.entries.length; i++) {
                     if (String(result.entries[i].provider || "").toLowerCase() === "codex"
                             && result.entries[i].codexResetCredits) {
                         credits = result.entries[i].codexResetCredits
+                        account = result.entries[i].account || ""
                         break
                     }
                 }
             }
+            root.codexResetCreditsAccount = account
             root.codexResetCredits = credits
             root.applyCodexResetCredits()
         }
@@ -1878,6 +1896,13 @@ PlasmoidItem {
             root.costSummaries = result.summaries
             root.applyCostSummaries()
         }
+    }
+
+    Timer {
+        id: codexResetCreditsWatchdog
+        interval: 300000
+        repeat: false
+        onTriggered: root.cancelCodexResetCredits()
     }
 
     Timer {
