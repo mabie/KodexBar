@@ -495,7 +495,7 @@ PlasmoidItem {
         if (force === false && loading) {
             return
         }
-        cancelCodexResetCredits()
+        stopCodexResetCredits()
         refreshWatchdog.restart()
         loading = true
         errorMessage = ""
@@ -794,10 +794,15 @@ PlasmoidItem {
         return copy
     }
 
-    // Supplementary results belong only to this refresh and a known account.
-    function cancelCodexResetCredits() {
+    // A new refresh drops the in-flight request but keeps the last credits,
+    // so the card doesn't flicker; the account check guards against reuse.
+    function stopCodexResetCredits() {
         codexResetCreditsWatchdog.stop()
         codexResetCreditsExecutable.connectedSources = []
+    }
+
+    function cancelCodexResetCredits() {
+        stopCodexResetCredits()
         codexResetCredits = null
         codexResetCreditsAccount = ""
         applyCodexResetCredits()
@@ -836,19 +841,20 @@ PlasmoidItem {
     // the CLI defaults or codex/cli. Fetch them separately in that case
     // instead of putting codex/oauth ahead of the other candidates.
     function refreshCodexResetCredits(normalized) {
-        if (activeProvider === "codex" && activeSource === "oauth") {
-            return
-        }
-        for (var i = 0; i < normalized.length; i++) {
-            var entry = normalized[i]
-            if (String(entry.provider || "").toLowerCase() === "codex"
-                    && !entry.errorMessage && !entry.codexResetCredits) {
-                codexResetCreditsExecutable.connectedSources = []
-                codexResetCreditsWatchdog.restart()
-                codexResetCreditsExecutable.connectSource(codexResetCreditsCommandLine())
-                return
+        if (activeProvider !== "codex" || activeSource !== "oauth") {
+            for (var i = 0; i < normalized.length; i++) {
+                var entry = normalized[i]
+                if (String(entry.provider || "").toLowerCase() === "codex"
+                        && !entry.errorMessage && !entry.codexResetCredits) {
+                    codexResetCreditsExecutable.connectedSources = []
+                    codexResetCreditsWatchdog.restart()
+                    codexResetCreditsExecutable.connectSource(codexResetCreditsCommandLine())
+                    return
+                }
             }
         }
+        // Nothing will replace the kept credits, so don't let them linger.
+        cancelCodexResetCredits()
     }
 
     function applyCostSummaries() {
